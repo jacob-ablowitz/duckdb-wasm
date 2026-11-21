@@ -166,6 +166,11 @@ web::Result<bool> ArrowIPCStreamComplete(const std::vector<uint8_t>& stream, siz
         if (code != NANOARROW_OK) {
             return web::Status::Invalid("Invalid Arrow IPC stream: ", ArrowErrorMessage(&error));
         }
+        if (prefix_size != 8) {
+            // No continuation marker: a pre-0.15 message, or no stream at all (an Arrow file starts with "ARROW1"),
+            // which would otherwise wait for a length read from the first 4 bytes. scan_arrow_ipc rejects it too.
+            return web::Status::Invalid("Invalid Arrow IPC stream: invalid message prefix");
+        }
         code = ArrowIpcDecoderVerifyHeader(decoder.get(), data, &error);
         if (code == ESPIPE) {
             return false;

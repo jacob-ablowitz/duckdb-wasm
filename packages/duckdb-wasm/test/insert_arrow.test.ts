@@ -286,5 +286,17 @@ export function testArrowInsertAsync(db: () => duckdb.AsyncDuckDB): void {
             const result = await conn.query('SELECT count(*)::INTEGER AS n FROM ipc_negative');
             expect(result.getChildAt(0)!.get(0)).toEqual(1000);
         });
+        it('rejects bytes without the message continuation marker', async () => {
+            await conn.query(`DROP TABLE IF EXISTS ipc_prefix`);
+            const [schema, batches] = generateArrowXInt32(1000, 2);
+            const table = new arrow.Table(schema, batches);
+            // The Arrow file format, its first 4 bytes would be read as a pre-0.15 message length
+            await expectAsync(
+                conn.insertArrowFromIPCStream(arrow.tableToIPC(table, 'file'), { name: 'ipc_prefix' }),
+            ).toBeRejectedWithError(/invalid message prefix/);
+            await conn.insertArrowFromIPCStream(arrow.tableToIPC(table, 'stream'), { name: 'ipc_prefix' });
+            const result = await conn.query('SELECT count(*)::INTEGER AS n FROM ipc_prefix');
+            expect(result.getChildAt(0)!.get(0)).toEqual(1000);
+        });
     });
 }
