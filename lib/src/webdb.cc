@@ -173,13 +173,17 @@ web::Result<bool> ArrowIPCStreamComplete(const std::vector<uint8_t>& stream, siz
         if (code != NANOARROW_OK) {
             return web::Status::Invalid("Invalid Arrow IPC stream: ", ArrowErrorMessage(&error));
         }
-        // The header size includes the prefix
-        auto message_size = decoder->header_size_bytes + decoder->body_size_bytes;
-        if (scanned + message_size > stream.size()) {
+        // The header size includes the prefix. A negative size would move the scan backwards, or not at all.
+        if (decoder->header_size_bytes < 0 || decoder->body_size_bytes < 0) {
+            return web::Status::Invalid("Invalid Arrow IPC stream: negative message size");
+        }
+        auto message_size =
+            static_cast<uint64_t>(decoder->header_size_bytes) + static_cast<uint64_t>(decoder->body_size_bytes);
+        if (message_size > stream.size() - scanned) {
             // The body is not complete yet
             return false;
         }
-        scanned += message_size;
+        scanned += static_cast<size_t>(message_size);
     }
     return false;
 }

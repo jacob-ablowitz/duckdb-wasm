@@ -261,5 +261,30 @@ export function testArrowInsertAsync(db: () => duckdb.AsyncDuckDB): void {
             const result = await conn.query('SELECT count(*)::INTEGER AS n FROM ipc_invalid');
             expect(result.getChildAt(0)!.get(0)).toEqual(3000);
         });
+        it('rejects a negative message body size', async () => {
+            await conn.query(`DROP TABLE IF EXISTS ipc_negative`);
+            const [schema, batches] = generateArrowXInt32(1000, 2);
+            const stream = arrow.tableToIPC(new arrow.Table(schema, batches), 'stream');
+            const schemaSize = arrow.tableToIPC(new arrow.Table(schema), 'stream').length - 8;
+            // The record batch message: continuation, metadata size, metadata, body
+            const view = new DataView(stream.buffer, stream.byteOffset);
+            const headerSize = 8 + view.getInt32(schemaSize + 4, true);
+            const bodySize = stream.length - 8 - schemaSize - headerSize;
+            // Set the bodyLength of its metadata to minus the header size, the message size is then 0
+            const offsets = [];
+            for (let i = schemaSize + 8; i + 8 <= schemaSize + headerSize; ++i) {
+                if (view.getBigInt64(i, true) === BigInt(bodySize)) offsets.push(i);
+            }
+            expect(offsets.length).toEqual(1);
+            view.setBigInt64(offsets[0], BigInt(-headerSize), true);
+            await expectAsync(
+                conn.insertArrowFromIPCStream(stream.slice(0, schemaSize + headerSize), { name: 'ipc_negative' }),
+            ).toBeRejectedWithError(/negative message size/);
+            await conn.insertArrowFromIPCStream(arrow.tableToIPC(new arrow.Table(schema, batches), 'stream'), {
+                name: 'ipc_negative',
+            });
+            const result = await conn.query('SELECT count(*)::INTEGER AS n FROM ipc_negative');
+            expect(result.getChildAt(0)!.get(0)).toEqual(1000);
+        });
     });
 }
