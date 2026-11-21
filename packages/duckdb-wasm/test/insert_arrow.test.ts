@@ -243,4 +243,23 @@ export function testArrowInsertAsync(db: () => duckdb.AsyncDuckDB): void {
             ]);
         });
     });
+    describe('Arrow async insert from ipc stream chunks', () => {
+        it('accepts a new stream after an invalid message', async () => {
+            await conn.query(`DROP TABLE IF EXISTS ipc_invalid`);
+            const [schema, batches] = generateArrowXInt32(3000, 2);
+            const stream = arrow.tableToIPC(new arrow.Table(schema, batches), 'stream');
+            // The schema message without the end-of-stream marker
+            const schemaOnly = arrow.tableToIPC(new arrow.Table(schema), 'stream');
+            await conn.insertArrowFromIPCStream(schemaOnly.slice(0, schemaOnly.length - 8), { name: 'ipc_invalid' });
+            // A message prefix announcing 16 bytes of metadata that is not a valid flatbuffer
+            const invalid = new Uint8Array(64).fill(0x42);
+            invalid.set([0xff, 0xff, 0xff, 0xff, 16, 0, 0, 0]);
+            await expectAsync(conn.insertArrowFromIPCStream(invalid, { name: 'ipc_invalid' })).toBeRejectedWithError(
+                /Invalid Arrow IPC stream/,
+            );
+            await conn.insertArrowFromIPCStream(stream, { name: 'ipc_invalid' });
+            const result = await conn.query('SELECT count(*)::INTEGER AS n FROM ipc_invalid');
+            expect(result.getChildAt(0)!.get(0)).toEqual(3000);
+        });
+    });
 }

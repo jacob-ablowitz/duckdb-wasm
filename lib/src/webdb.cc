@@ -680,8 +680,14 @@ web::Status WebDB::Connection::InsertArrowFromIPCStream(nonstd::span<const uint8
 
         /// Buffer the stream bytes until the end of the stream, which may take several calls
         arrow_ipc_stream_.insert(arrow_ipc_stream_.end(), stream.begin(), stream.end());
-        WEB_ASSIGN_OR_RAISE(auto complete, ArrowIPCStreamComplete(arrow_ipc_stream_, arrow_ipc_stream_scanned_));
-        if (!complete) {
+        auto complete = ArrowIPCStreamComplete(arrow_ipc_stream_, arrow_ipc_stream_scanned_);
+        if (!complete.ok()) {
+            // Drop the invalid stream, or every later insert on the connection fails on the same bytes
+            arrow_insert_options_.reset();
+            arrow_ipc_stream_.clear();
+            return complete.status();
+        }
+        if (!*complete) {
             return web::Status::OK();
         }
 
